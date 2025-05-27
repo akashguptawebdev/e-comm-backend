@@ -12,14 +12,11 @@ const app = express();
 //Initialize dotenv
 dotenv.config();
 
-// const corsOptions = {
-//   origin: ["*", "https://backend.growlotusfintech.com"], 
-//   methods: "GET, POST, PUT, DELETE", // Allow these methods
-//   credentials: true, // Allow cookies to be sent with requests
-// };
-
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: "http://localhost:5173", // ✅ DO NOT use "*"
+  credentials: true                // ✅ Required for cookies
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());

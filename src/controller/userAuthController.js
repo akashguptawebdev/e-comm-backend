@@ -1,9 +1,11 @@
+import e from "express";
 import { sendEmailFunction } from "../config/configNodeMailer.js";
 import OtpModel from "../model/OTPModel.js";
 import userModel from "../model/userModel.js";
 import { generateToken } from "../utils/jwtTokenGenerate.js";
 import { sendOtpToMobile } from "../utils/sendOtpToMobile.js";
-
+import  cloudinary from "../config/cloudinaryConfig.js";
+import fs from 'fs/promises';
 export const sendOtpForSignup = async (req, res) => {
     try {
       const { name, email, phoneNumber } = req.body;
@@ -11,6 +13,7 @@ export const sendOtpForSignup = async (req, res) => {
       // Name and at least one of email or phoneNumber is required
       if (!name || (!email && !phoneNumber)) {
         return res.status(400).json({
+          success:false ,
           message: "Please provide name and either email or phone number.",
         });
       }
@@ -20,7 +23,7 @@ export const sendOtpForSignup = async (req, res) => {
         email ? { email } : { phoneNumber }
       );
       if (existingUser) {
-        return res.status(400).json({ message: "User already exists" });
+        return res.status(400).json({success:false , message: "User already exists" });
       }
   
       // Generate OTP and expiry
@@ -61,7 +64,7 @@ export const sendOtpForSignup = async (req, res) => {
         console.log(`Signup OTP sent to email ${email}: ${otp}`);
       }
   
-      res.status(200).json({ message: "Signup OTP sent successfully" });
+      res.status(200).json({success:true , message: "Signup OTP sent successfully" });
     } catch (error) {
       console.error("Error in sendOtpForSignup:", error.message);
       res.status(500).json({ message: "Internal server error during signup OTP" });
@@ -123,10 +126,10 @@ export const AdminLogin = async (req, res) => {
 
     // Fetch user by email or phone number
     const query = email ? { email } : { phoneNumber };
-    const user = await userModel.findOne(query);
+    const user = await userModel.findOne(query); // exclude password field for comparison
 
     if (!user || user.role !== 'admin') {
-      return res.status(404).json({ message: "Admin account not found." });
+      return res.status(404).json({success:false , message: "Admin account not found." });
     }
 
     // === OTP LOGIN FLOW ===
@@ -144,23 +147,36 @@ export const AdminLogin = async (req, res) => {
     } else if (password) {
       const isMatch = await user.comparePassword(password, user.password);
       if (!isMatch) {
-        return res.status(401).json({ message: "Invalid email or password." });
+        return res.status(401).json({success:false , message: "Invalid email or password." });
       }
     } else {
-      return res.status(400).json({ message: "Provide either OTP or password to login." });
+      return res.status(400).json({success:false , message: "Provide either OTP or password to login." });
     }
 
     // === Generate token ===
     const token = generateToken(user._id);
+    res.cookie("token", token, {
+      httpOnly: false,
+      secure: false,      
+      sameSite: 'Lax',     // or 'None' if frontend is on different origin & using withCredentials
+      maxAge: 24 * 60 * 60 * 1000,
+    });
 
     res.status(200).json({
+      success:true ,
       message: "Admin login successful",
       token,
       user: {
         _id: user._id,
         name: user.name,
         email: user.email,
+        phoneNumber: user.phoneNumber,
         role: user.role,
+        profilePic: user.profilePic,
+        isVerified: user.isVerified,
+        createdAt: user.createdAt,
+        gender: user.gender,
+        dateOfBirth: user.dateOfBirth,
       },
     });
 
@@ -173,7 +189,8 @@ export const AdminLogin = async (req, res) => {
 export const sendOtpForLogin = async (req, res) => {
 try {
     const { email, phoneNumber } = req.body;
-    const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+91${phoneNumber}`;
+    console.log(email, phoneNumber)
+    
     // Check if at least one of email or phoneNumber is provided
     if (!email && !phoneNumber) {
     return res.status(400).json({
@@ -187,6 +204,7 @@ try {
 
     // Save and send OTP via phone if provided
     if (phoneNumber) {
+      const formattedPhone = phoneNumber.startsWith("+") ? phoneNumber : `+91${phoneNumber}`;
         const isPhoneInDB = await OtpModel.findOne({ phoneNumber });
         if (isPhoneInDB) {
             await OtpModel.updateOne(
@@ -219,10 +237,10 @@ try {
     }
   }
 
-    res.status(200).json({ message: "OTP sent successfully" });
+    res.status(200).json({ success:true, message: "OTP sent successfully" });
 } catch (error) {
     console.error("Error setting OTP:", error);
-    res.status(500).json({ message: "Internal server error" });
+    res.status(500).json({ message: "Internal server error" , error:error.message });
 }
 };
 
@@ -252,7 +270,18 @@ export const verifyOtpAndLogin = async (req, res) => {
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
-      return res.status(200).json({ message: "Login successful", token });
+      return res.status(200).json({ success:true , message: "Login successful", token ,  user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        role: user.role,
+        profilePic: user.profilePic,
+        isVerified: user.isVerified,
+        createdAt: user.createdAt,
+        gender: user.gender,
+        dateOfBirth: user.dateOfBirth,
+      }, });
     }
 
     // -----------------------
@@ -263,15 +292,15 @@ export const verifyOtpAndLogin = async (req, res) => {
       dbOTP = await OtpModel.findOne({ email });
         console.log(dbOTP , user)
         if(!user){
-            return res.status(404).json({ message: "User is Not register" });
+            return res.status(404).json({success:false , message: "User is Not register" });
         }
       if (!dbOTP){
-          return res.status(404).json({ message: "OTP expired" });
+          return res.status(404).json({success:false , message: "OTP expired" });
     }
 
       const currentTime = new Date();
       if (dbOTP.otp !== otp || dbOTP.expiresAt < currentTime) {
-        return res.status(401).json({ message: "Invalid or expired OTP" });
+        return res.status(401).json({success:false , message: "Invalid or expired OTP" });
       }
 
       // Mark OTP as expired instead of deleting
@@ -285,7 +314,18 @@ export const verifyOtpAndLogin = async (req, res) => {
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
-      return res.status(200).json({ message: "Login via email OTP successful", token });
+      return res.status(200).json({success:true , message: "Login via email OTP successful", token, user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        role: user.role,
+        profilePic: user.profilePic,
+        isVerified: user.isVerified,
+        createdAt: user.createdAt,
+        gender: user.gender,
+        dateOfBirth: user.dateOfBirth,
+      }, });
     }
 
     // -----------------------
@@ -296,11 +336,11 @@ export const verifyOtpAndLogin = async (req, res) => {
       dbOTP = await OtpModel.findOne({ phoneNumber });
 
       if (!user || !dbOTP)
-        return res.status(404).json({ message: "User or OTP not found" });
+        return res.status(404).json({success:false , message: "User or OTP not found" });
 
       const currentTime = new Date();
       if (dbOTP.otp !== otp || dbOTP.expiresAt < currentTime) {
-        return res.status(401).json({ message: "Invalid or expired OTP" });
+        return res.status(401).json({success:false , message: "Invalid or expired OTP" });
       }
 
       // Mark OTP as expired instead of deleting
@@ -308,13 +348,22 @@ export const verifyOtpAndLogin = async (req, res) => {
 
       const token = generateToken(user);
       res.cookie("token", token, {
-        httpOnly: true,
-        secure: true,
         sameSite: "strict",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
-      return res.status(200).json({ message: "Login via mobile OTP successful", token });
+      return res.status(200).json({success:true , message: "Login via mobile OTP successful", token ,  user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        role: user.role,
+        profilePic: user.profilePic,
+        isVerified: user.isVerified,
+        createdAt: user.createdAt,
+        gender: user.gender,
+        dateOfBirth: user.dateOfBirth,
+      },});
     }
 
     // -----------------------
@@ -327,7 +376,7 @@ export const verifyOtpAndLogin = async (req, res) => {
 
   } catch (error) {
     console.error("Login error:", error.message);
-    res.status(500).json({ message: "Server error during login" });
+    res.status(500).json({ message: "Server error during login" ,error: error.message });
   }
 };
 
@@ -370,4 +419,108 @@ export const logout = async (req , res)=>{
     } catch (error) {
         console.log(error.message)
     }
+}
+
+// user profile
+
+export const editUserProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    let profilePicUrl = null;
+
+    // Upload profile picture to Cloudinary if provided
+    if (req.file) {
+      const filePath = req.file.path;
+      try {
+        const uploadResult = await cloudinary.uploader.upload(filePath, {
+          folder: 'userProfilePics',
+          use_filename: true,
+          unique_filename: false,
+        });
+        profilePicUrl = uploadResult.secure_url;
+        await fs.unlink(filePath); // Clean up local file
+      } catch (uploadError) {
+        console.error("Cloudinary upload error:", uploadError);
+        return res.status(500).json({ message: "Failed to upload image.", success: false });
+      }
+    }
+
+    // Build updateFields only with defined values
+    const { name, gender, dateOfBirth } = req.body;
+    const updateFields = {};
+
+    if (name !== undefined) updateFields.name = name;
+    if (gender !== undefined) updateFields.gender = gender;
+    if (dateOfBirth !== undefined) updateFields.dateOfBirth = dateOfBirth;
+    if (profilePicUrl) updateFields.profilePic = profilePicUrl;
+
+    // Prevent empty patch
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({ message: "No valid fields provided to update.", success: false });
+    }
+
+    // Update user in DB
+    const updatedUser = await userModel.findByIdAndUpdate(
+      userId,
+      { $set: updateFields },
+      { new: true }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: "User not found.", success: false });
+    }
+
+    return res.status(200).json({
+      message: "Profile updated successfully",
+      success: true,
+      user: {
+        _id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        phoneNumber: updatedUser.phoneNumber,
+        gender: updatedUser.gender,
+        dateOfBirth: updatedUser.dateOfBirth,
+        profilePic: updatedUser.profilePic,
+        dateOfBirth: updatedUser.dateOfBirth,
+      },
+    });
+  } catch (error) {
+    console.error("Error updating profile:", error.message);
+    return res.status(500).json({ message: "Internal server error", success: false });
+  }
+};
+
+
+export const getUserProfile = async (req, res) => {
+  try {
+      const userId = req.user._id;
+
+      // Fetch user profile excluding password
+      const user = await userModel.findById(userId).select('-password');
+      if (!user) {
+          return res.status(404).json({ message: "User not found." });
+      }
+
+      res.status(200).json({
+          message: "User profile fetched successfully",
+          sucess:true,
+          user: {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            phoneNumber: user.phoneNumber,
+            role: user.role,
+            profilePic: user.profilePic,
+            isVerified: user.isVerified,
+            createdAt: user.createdAt,
+            gender: user.gender,
+            dateOfBirth: user.dateOfBirth,
+          },
+          // Add other fields as needed
+      });
+  }
+  catch (error) {
+      console.error("Error fetching user profile:", error.message);
+      res.status(500).json({ message: "Internal server error" });
+  }
 }

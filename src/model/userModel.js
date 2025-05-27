@@ -7,7 +7,18 @@ const userSchema = new mongoose.Schema({
     required: true,
     trim: true,
   },
-
+  profilePic:{
+    type: String,
+    default: "",
+    trim: true,
+  },
+  gender: {
+    type: String,
+    enum: ['male' ,'female', 'other'],
+  },
+  dateOfBirth: {
+    type: Date,
+  },
   email: {
     type: String,
     required: function() {
@@ -22,7 +33,6 @@ const userSchema = new mongoose.Schema({
       "Please enter a valid email address"
     ]
   },
-
   password: {
     type: String,
   },
